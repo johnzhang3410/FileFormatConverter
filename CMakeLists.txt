@@ -4,13 +4,13 @@ project(DocxToPdfConverter VERSION 1.0)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED True)
 
-include_directories(include)
-
 find_package(PkgConfig REQUIRED)
 
 # Platform-Specific Settings
 if(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")  # macOS
     message(STATUS "Configuring for macOS")
+
+    include_directories(/usr/include /usr/local/include)
 
     # libharu for macOS 
     find_path(LIBHARU_INCLUDE_DIR haru.h
@@ -40,6 +40,8 @@ if(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")  # macOS
 
 elseif(${CMAKE_SYSTEM_NAME} MATCHES "Linux")  # Ubuntu/Linux
     message(STATUS "Configuring for Linux")
+
+    include_directories(/usr/include /usr/include/x86_64-linux-gnu)
 
     # libharu for Ubuntu 
     find_path(LIBHARU_INCLUDE_DIR hpdf.h
