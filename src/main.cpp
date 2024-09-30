@@ -1,5 +1,6 @@
 #include <iostream>
 #include "DocxParser.h"
+#include "DocxToPdfConverter.h"
 
 // expands the ~ directory since cpp doesn't do it like shell
 std::string expand_home_directory(const std::string &path)
@@ -20,10 +21,13 @@ int main()
     // TODO: Hardcoded for now but should ask for user input, could handle this on the cloud as a future addition
     std::string docx_file = expand_home_directory("~/Desktop/workspace/FileFormatConverter/example.docx");
     std::string output_dir = expand_home_directory("~/Desktop/workspace/FileFormatConverter/outdir");
+    std::string output_pdf = "~/Desktop/workspace/FileFormatConverter";
 
     if (unzip_docx(docx_file, output_dir))
     {
         std::cout << "DOCX file successfully unzipped!" << std::endl;
+        generatePDF(output_dir, output_pdf);
+        std::cout << "PDF file successfully generated!" << std::endl;
     }
     else
     {
