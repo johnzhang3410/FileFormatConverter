@@ -46,6 +46,7 @@ void generatePDF(const std::string &docxDir, const std::string &outputPdfPath)
     for (XMLElement *para = body->FirstChildElement("w:p"); para; para = para->NextSiblingElement("w:p"))
     {
         int fontSize = 12;
+        //for each run in the same paragraph, I set attributes like bold, italic, color and write the stylized text to pdf
         for (XMLElement *run = para->FirstChildElement("w:r"); run; run = run->NextSiblingElement("w:r"))
         {
             // Extract text and formatting
