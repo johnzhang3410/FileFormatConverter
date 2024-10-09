@@ -34,7 +34,7 @@ int main()
     // TODO: Hardcoded for now but should ask for user input, could handle this on the cloud as a future addition
     std::string docx_file = expand_home_directory(base_dir + "/example.docx");
     std::string output_dir = expand_home_directory(base_dir + "/outdir");
-    std::string output_pdf = base_dir;
+    std::string output_pdf = expand_home_directory(base_dir + "/output.pdf");
 
     if (unzip_docx(docx_file, output_dir))
     {
