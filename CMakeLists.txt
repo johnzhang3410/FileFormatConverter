@@ -94,7 +94,7 @@ elseif(${CMAKE_SYSTEM_NAME} MATCHES "Linux")  # Ubuntu/Linux
     pkg_check_modules(LibZip REQUIRED libzip)
     if(LibZip_FOUND)
         include_directories(${LibZip_INCLUDE_DIRS})
-        link_directories(${LibZip_LIBRARY_DIRS})
+        # link_directories(${LibZip_LIBRARY_DIRS})
     else()
         message(FATAL_ERROR "libzip not found on Linux")
     endif()
@@ -116,18 +116,18 @@ endif()
 find_package(Boost COMPONENTS filesystem system REQUIRED)
 if(Boost_FOUND)
     include_directories(${Boost_INCLUDE_DIRS})
-    link_directories(${Boost_LIBRARY_DIRS})
+    # link_directories(${Boost_LIBRARY_DIRS})
 else()
     message(FATAL_ERROR "Boost not found")
 endif()
 
 # Add the executable
-add_executable(DocxToPdfConverter src/main.cpp src/DocxParser.cpp)
+add_executable(DocxToPdfConverter src/main.cpp src/DocxParser.cpp src/DocxToPdfConverter.cpp)
 
 # Link libraries
 target_link_libraries(DocxToPdfConverter
     ${LIBHARU_LIBRARY}
-    ${LIBZIP_LIBRARY}
+    ${LibZip_LIBRARIES}
     ${TinyXML2_LIBRARIES}
     Boost::filesystem
     Boost::system

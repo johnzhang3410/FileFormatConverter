@@ -4,6 +4,7 @@
 #include <fstream>
 #include <sys/stat.h>
 #include <errno.h>
+#include <string.h>
 
 // Function to recursively create directories
 bool create_directories(const std::string &path)
