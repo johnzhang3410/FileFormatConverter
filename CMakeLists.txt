@@ -8,24 +8,27 @@ find_package(PkgConfig REQUIRED)
 
 include_directories(include)
 
+if(POLICY CMP0167)
+    cmake_policy(SET CMP0167 OLD)
+endif()
+
 # Platform-Specific Settings
 if(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")  # macOS
     message(STATUS "Configuring for macOS")
 
-    # libharu for macOS 
+    # Define possible Homebrew prefixes
+    set(HOMEBREW_PREFIXES /usr/local /opt/homebrew)
+
+    # libharu for macOS
     find_path(LIBHARU_INCLUDE_DIR hpdf.h
         HINTS
-            /usr/local/include
-            /opt/homebrew/include
-            /opt/homebrew/Cellar/libharu/2.4.4/include
+            ${HOMEBREW_PREFIXES}/include
     )
 
     find_library(LIBHARU_LIBRARY
         NAMES hpdf
         HINTS
-            /usr/local/lib
-            /opt/homebrew/lib
-            /opt/homebrew/Cellar/libharu/2.4.4/lib
+            ${HOMEBREW_PREFIXES}/lib
     )
 
     if(NOT LIBHARU_INCLUDE_DIR)
@@ -38,43 +41,59 @@ if(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")  # macOS
 
     # Include the directories
     include_directories(${LIBHARU_INCLUDE_DIR})
-    link_directories(${LIBHARU_LIBRARY})
 
-    # libzip for macOS 
+    # libzip for macOS
     find_path(LIBZIP_INCLUDE_DIR zip.h
         HINTS
-            /usr/local/include
-            /opt/homebrew/include
+            ${HOMEBREW_PREFIXES}/include
     )
     find_library(LIBZIP_LIBRARY
         NAMES zip
         HINTS
-            /usr/local/lib
-            /opt/homebrew/lib
+            ${HOMEBREW_PREFIXES}/lib
     )
 
-    if(NOT LIBZIP_INCLUDE_DIR OR NOT LIBZIP_LIBRARY)
-        message(FATAL_ERROR "libzip not found on macOS")
+    if(NOT LIBZIP_INCLUDE_DIR)
+        message(FATAL_ERROR "Could not find libzip headers (zip.h)")
+    endif()
+
+    if(NOT LIBZIP_LIBRARY)
+        message(FATAL_ERROR "Could not find libzip library (libzip)")
     endif()
 
     include_directories(${LIBZIP_INCLUDE_DIR})
-    link_directories(${LIBZIP_LIBRARY})
 
-    # TinyXML2 for macOS 
-    find_package(TinyXML2 REQUIRED)
-    if(TinyXML2_FOUND)
-        include_directories(${TinyXML2_INCLUDE_DIRS})
-        link_directories(${TinyXML2_LIBRARY_DIRS})
-    else()
-        message(FATAL_ERROR "TinyXML2 not found on macOS")
+    # TinyXML2 for macOS
+    find_path(TINYXML2_INCLUDE_DIR tinyxml2.h
+        HINTS
+            ${HOMEBREW_PREFIXES}/include
+    )
+    find_library(TINYXML2_LIBRARY
+        NAMES tinyxml2
+        HINTS
+            ${HOMEBREW_PREFIXES}/lib
+    )
+    if(NOT TINYXML2_INCLUDE_DIR)
+        message(FATAL_ERROR "Could not find TinyXML2 headers (tinyxml2.h)")
     endif()
+    if(NOT TINYXML2_LIBRARY)
+        message(FATAL_ERROR "Could not find TinyXML2 library (tinyxml2)")
+    endif()
+
+    include_directories(${TINYXML2_INCLUDE_DIR})
+
+    # Set TINYXML2_LIB for macOS
+    set(TINYXML2_LIB ${TINYXML2_LIBRARY})
+
+    # Set LIBZIP_LIB for macOS
+    set(LIBZIP_LIB ${LIBZIP_LIBRARY})
 
 elseif(${CMAKE_SYSTEM_NAME} MATCHES "Linux")  # Ubuntu/Linux
     message(STATUS "Configuring for Linux")
 
     include_directories(/usr/include /usr/include/x86_64-linux-gnu)
 
-    # libharu for Ubuntu 
+    # libharu for Ubuntu
     find_path(LIBHARU_INCLUDE_DIR hpdf.h
         HINTS /usr/include
     )
@@ -88,22 +107,23 @@ elseif(${CMAKE_SYSTEM_NAME} MATCHES "Linux")  # Ubuntu/Linux
     endif()
 
     include_directories(${LIBHARU_INCLUDE_DIR})
-    link_directories(${LIBHARU_LIBRARY})
 
-    # libzip for Ubuntu 
+    # libzip for Ubuntu
     pkg_check_modules(LibZip REQUIRED libzip)
     if(LibZip_FOUND)
         include_directories(${LibZip_INCLUDE_DIRS})
-        # link_directories(${LibZip_LIBRARY_DIRS})
+        # Set LIBZIP_LIB for Linux
+        set(LIBZIP_LIB ${LibZip_LIBRARIES})
     else()
         message(FATAL_ERROR "libzip not found on Linux")
     endif()
 
-    # TinyXML2 for Ubuntu 
+    # TinyXML2 for Ubuntu
     pkg_check_modules(TinyXML2 REQUIRED tinyxml2)
     if(TinyXML2_FOUND)
         include_directories(${TinyXML2_INCLUDE_DIRS})
-        link_directories(${TinyXML2_LIBRARY_DIRS})
+        # Set TINYXML2_LIB for Linux
+        set(TINYXML2_LIB TinyXML2::TinyXML2)
     else()
         message(FATAL_ERROR "TinyXML2 not found on Linux")
     endif()
@@ -112,11 +132,10 @@ else()
     message(FATAL_ERROR "Unsupported platform")
 endif()
 
-# Boost 
+# Boost
 find_package(Boost COMPONENTS filesystem system REQUIRED)
 if(Boost_FOUND)
     include_directories(${Boost_INCLUDE_DIRS})
-    # link_directories(${Boost_LIBRARY_DIRS})
 else()
     message(FATAL_ERROR "Boost not found")
 endif()
@@ -124,11 +143,11 @@ endif()
 # Add the executable
 add_executable(DocxToPdfConverter src/main.cpp src/DocxParser.cpp src/DocxToPdfConverter.cpp)
 
-# Link libraries
+# Link libraries conditionally based on platform
 target_link_libraries(DocxToPdfConverter
     ${LIBHARU_LIBRARY}
-    ${LibZip_LIBRARIES}
-    ${TinyXML2_LIBRARIES}
+    ${LIBZIP_LIB}
+    ${TINYXML2_LIB}
     Boost::filesystem
     Boost::system
     z
