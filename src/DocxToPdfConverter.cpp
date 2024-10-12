@@ -58,12 +58,42 @@ void renderTextWithWrapping(HPDF_Doc pdf, HPDF_Page &page, const std::string &te
 
 //generates pdf from the parsed docx content
 void generatePDF(const std::string &docxDir, const std::string &outputPdfPath)
-{
+{   
     HPDF_Doc pdf = HPDF_New(NULL, NULL);
 
     if (!pdf)
     {
         std::cerr << "Failed to create PDF object." << std::endl;
+        return;
+    }
+
+    HPDF_UseUTFEncodings(pdf);
+    HPDF_SetCurrentEncoder(pdf, "UTF-8");
+
+    const char *fontName = HPDF_LoadTTFontFromFile(pdf, "../fonts/dejavu-fonts-ttf/ttf/DejaVuSans.ttf", HPDF_TRUE);
+    if (!fontName) {
+        std::cerr << "Failed to load TrueType font." << std::endl;
+        HPDF_Free(pdf);
+        return;
+    }
+
+    // Load bold font
+    const char *boldFontName = HPDF_LoadTTFontFromFile(pdf, "../fonts/dejavu-fonts-ttf/ttf/DejaVuSans-Bold.ttf", HPDF_TRUE);
+    HPDF_Font boldFont = HPDF_GetFont(pdf, boldFontName, "UTF-8");
+
+    // Load italic font
+    const char *italicFontName = HPDF_LoadTTFontFromFile(pdf, "../fonts/dejavu-fonts-ttf/ttf/DejaVuSans-Oblique.ttf", HPDF_TRUE);
+    HPDF_Font italicFont = HPDF_GetFont(pdf, italicFontName, "UTF-8");
+
+    // Load bold italic font
+    const char *boldItalicFontName = HPDF_LoadTTFontFromFile(pdf, "../fonts/dejavu-fonts-ttf/ttf/DejaVuSansCondensed-BoldOblique.ttf", HPDF_TRUE);
+    HPDF_Font boldItalicFont = HPDF_GetFont(pdf, boldItalicFontName, "UTF-8");
+
+    // Get the HPDF_Font object using the font name
+    HPDF_Font defaultFont = HPDF_GetFont(pdf, fontName, "UTF-8");
+    if (!defaultFont) {
+        std::cerr << "Failed to get HPDF_Font object." << std::endl;
+        HPDF_Free(pdf);
         return;
     }
 
@@ -78,9 +108,6 @@ void generatePDF(const std::string &docxDir, const std::string &outputPdfPath)
     float cursorY = HPDF_Page_GetHeight(page) - 50;
     float pageWidth = HPDF_Page_GetWidth(page);
     float maxTextWidth = pageWidth - leftMargin - rightMargin;
-    
-    //sets font, left margin and right margin
-    HPDF_Font defaultFont = HPDF_GetFont(pdf, "Helvetica", NULL);
 
     //tries to load and parse the document.xml file
     std::string documentXmlPath = docxDir + "/word/document.xml";
@@ -176,15 +203,15 @@ void generatePDF(const std::string &docxDir, const std::string &outputPdfPath)
                 HPDF_Font font = defaultFont;
                 if (isBold && isItalic)
                 {
-                    font = HPDF_GetFont(pdf, "Helvetica-BoldOblique", NULL);
+                    font = boldItalicFont;
                 }
                 else if (isBold)
                 {
-                    font = HPDF_GetFont(pdf, "Helvetica-Bold", NULL);
+                    font = boldFont;
                 }
                 else if (isItalic)
                 {
-                    font = HPDF_GetFont(pdf, "Helvetica-Oblique", NULL);
+                    font = italicFont;
                 }
                 HPDF_Page_SetFontAndSize(page, font, fontSize);
 
