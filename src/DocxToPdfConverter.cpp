@@ -18,6 +18,7 @@ struct TextFragment {
 
 struct TableCell {
     std::vector<TextFragment> textFragments;
+    size_t gridSpan = 1; // Default gridSpan is 1 (no colspan)
 };
 
 struct Table {
@@ -36,9 +37,9 @@ void renderTextWithWrapping(HPDF_Doc pdf, HPDF_Page &page, const std::string &te
     {
         // Find the next whitespace or non-whitespace run
         size_t nextPos = pos;
-        bool isSpace = isspace(text[pos]);
+        bool isSpace = isspace(static_cast<unsigned char>(text[pos]));
 
-        while (nextPos < len && isspace(text[nextPos]) == isSpace)
+        while (nextPos < len && isspace(static_cast<unsigned char>(text[nextPos])) == isSpace)
             nextPos++;
 
         // Extract the token (word or spaces)
@@ -86,6 +87,17 @@ Table parseTable(XMLElement *tblElement, HPDF_Font defaultFont, HPDF_Font boldFo
         for (XMLElement *tc = tr->FirstChildElement("w:tc"); tc; tc = tc->NextSiblingElement("w:tc"))
         {
             TableCell cell;
+
+            // Check for gridSpan
+            XMLElement *tcPr = tc->FirstChildElement("w:tcPr");
+            if (tcPr)
+            {
+                XMLElement *gridSpan = tcPr->FirstChildElement("w:gridSpan");
+                if (gridSpan && gridSpan->Attribute("w:val"))
+                {
+                    cell.gridSpan = std::stoul(gridSpan->Attribute("w:val"));
+                }
+            }
 
             // Iterate over paragraphs within the cell
             for (XMLElement *para = tc->FirstChildElement("w:p"); para; para = para->NextSiblingElement("w:p"))
@@ -182,8 +194,15 @@ Table parseTable(XMLElement *tblElement, HPDF_Font defaultFont, HPDF_Font boldFo
                         else if (strcmp(child->Name(), "w:br") == 0)
                         {
                             // Line break within table cell
-                            // You can handle line breaks within table cells if needed
-                            continue;
+                            // Handle if necessary
+                            TextFragment fragment;
+                            fragment.text = "\n";
+                            fragment.font = font;
+                            fragment.fontSize = fontSize;
+                            fragment.r = r;
+                            fragment.g = g;
+                            fragment.b = b;
+                            cell.textFragments.push_back(fragment);
                         }
                     }
                 }
@@ -198,7 +217,136 @@ Table parseTable(XMLElement *tblElement, HPDF_Font defaultFont, HPDF_Font boldFo
     return table;
 }
 
-// Function to Render a Table Using libharu
+float calculateTextHeight(HPDF_Doc pdf, HPDF_Page page, const std::string &text,
+                          float fontSize, HPDF_Font font, float cellWidth)
+{
+    size_t pos = 0;
+    size_t len = text.length();
+    int lines = 1; // Start with at least one line
+    float cursorX = 0.0f;
+
+    while (pos < len)
+    {
+        // Handle line breaks
+        if (text[pos] == '\n')
+        {
+            lines++;
+            cursorX = 0.0f;
+            pos++;
+            continue;
+        }
+
+        // Find the next whitespace or non-whitespace run
+        size_t nextPos = pos;
+        bool isSpace = isspace(static_cast<unsigned char>(text[pos]));
+
+        while (nextPos < len && isspace(static_cast<unsigned char>(text[nextPos])) == isSpace && text[nextPos] != '\n')
+            nextPos++;
+
+        // Extract the token
+        std::string token = text.substr(pos, nextPos - pos);
+        float tokenWidth = HPDF_Page_TextWidth(page, token.c_str());
+
+        // If word doesn't fit on the current line
+        if (cursorX + tokenWidth > cellWidth && !isSpace)
+        {
+            lines++;
+            cursorX = 0.0f;
+        }
+
+        cursorX += tokenWidth;
+        pos = nextPos;
+    }
+
+    // Calculate total height based on number of lines
+    float lineHeight = fontSize + 2.0f; // Adjust as necessary
+    return lines * lineHeight;
+}
+
+float calculateCellHeight(HPDF_Doc pdf, HPDF_Page page, const TableCell &cell, float cellWidth)
+{
+    float totalHeight = 0.0f;
+
+    for (const auto &fragment : cell.textFragments)
+    {
+        // Set font and size
+        HPDF_Page_SetFontAndSize(page, fragment.font, fragment.fontSize);
+
+        // Handle line breaks
+        std::string text = fragment.text;
+        std::replace(text.begin(), text.end(), '\n', ' ');
+
+        // Calculate height needed for this fragment
+        float fragmentHeight = calculateTextHeight(pdf, page, text,
+                                                   fragment.fontSize, fragment.font, cellWidth - 10); // Subtract padding
+        totalHeight += fragmentHeight;
+    }
+
+    // Ensure minimum cell height
+    float defaultLineHeight = 20.0f; // Adjust as needed
+    return std::max(totalHeight, defaultLineHeight);
+}
+
+void renderTextInCell(HPDF_Doc pdf, HPDF_Page &page, const std::string &text,
+                      float &cursorX, float &cursorY, float cellWidth,
+                      float fontSize, HPDF_Font font, float bottomY)
+{
+    size_t pos = 0;
+    size_t len = text.length();
+    float initialX = cursorX; // Save initial X position
+
+    while (pos < len)
+    {
+        // Handle line breaks
+        if (text[pos] == '\n')
+        {
+            cursorY -= fontSize + 2.0f;
+            cursorX = initialX; // Reset to left edge of cell
+            pos++;
+
+            // Stop rendering if we exceed the bottom of the cell
+            if (cursorY < bottomY)
+            {
+                break;
+            }
+            continue;
+        }
+
+        // Find the next whitespace or non-whitespace run
+        size_t nextPos = pos;
+        bool isSpace = isspace(static_cast<unsigned char>(text[pos]));
+
+        while (nextPos < len && isspace(static_cast<unsigned char>(text[nextPos])) == isSpace && text[nextPos] != '\n')
+            nextPos++;
+
+        // Extract the token
+        std::string token = text.substr(pos, nextPos - pos);
+        float tokenWidth = HPDF_Page_TextWidth(page, token.c_str());
+
+        // If word doesn't fit on the current line
+        if ((cursorX - initialX) + tokenWidth > cellWidth && !isSpace)
+        {
+            cursorY -= fontSize + 2.0f;
+            cursorX = initialX; // Reset to left edge of cell
+
+            // Stop rendering if we exceed the bottom of the cell
+            if (cursorY < bottomY)
+            {
+                break;
+            }
+        }
+
+        // Render the token
+        HPDF_Page_BeginText(page);
+        HPDF_Page_MoveTextPos(page, cursorX, cursorY);
+        HPDF_Page_ShowText(page, token.c_str());
+        HPDF_Page_EndText(page);
+
+        cursorX += tokenWidth;
+        pos = nextPos;
+    }
+}
+
 void renderTable(HPDF_Doc pdf, HPDF_Page &page, const Table &table,
                  float &cursorX, float &cursorY, float pageWidth,
                  float leftMargin, float rightMargin)
@@ -208,18 +356,64 @@ void renderTable(HPDF_Doc pdf, HPDF_Page &page, const Table &table,
     // Table properties
     float tableStartX = leftMargin;
     float tableWidth = pageWidth - leftMargin - rightMargin;
-    size_t numCols = table.rows[0].size();
+
+    // Determine the maximum number of columns considering gridSpans
+    size_t numCols = 0;
+    for (const auto &row : table.rows)
+    {
+        size_t colCount = 0;
+        for (const auto &cell : row)
+        {
+            colCount += cell.gridSpan;
+        }
+        numCols = std::max(numCols, colCount);
+    }
+
+    if (numCols == 0)
+    {
+        std::cerr << "Error: Table has zero columns." << std::endl;
+        return;
+    }
 
     // Define column widths (evenly distributed)
     std::vector<float> colWidths(numCols, tableWidth / numCols);
 
-    // Define row height (fixed for simplicity)
-    float rowHeight = 20.0f;
-
-    // Draw table borders and content
+    // Iterate over each row
     for (const auto &row : table.rows)
     {
-        // Draw horizontal line for the row
+        // Calculate required height for the row
+        float maxCellHeight = 0.0f;
+        std::vector<float> cellHeights;
+        std::vector<float> cellWidths;
+
+        // First pass: calculate cell heights and widths
+        size_t colIndex = 0;
+        for (const auto &cell : row)
+        {
+            size_t span = cell.gridSpan;
+            float cellWidth = 0.0f;
+            for (size_t i = 0; i < span && (colIndex + i) < numCols; ++i)
+            {
+                cellWidth += colWidths[colIndex + i];
+            }
+            cellWidths.push_back(cellWidth);
+
+            float cellHeight = calculateCellHeight(pdf, page, cell, cellWidth);
+            cellHeights.push_back(cellHeight);
+            maxCellHeight = std::max(maxCellHeight, cellHeight);
+
+            colIndex += span;
+        }
+
+        // Handle page break if necessary
+        if (cursorY - maxCellHeight < 50)
+        {
+            page = HPDF_AddPage(pdf);
+            HPDF_Page_SetSize(page, HPDF_PAGE_SIZE_A4, HPDF_PAGE_PORTRAIT);
+            cursorY = HPDF_Page_GetHeight(page) - 50;
+        }
+
+        // Draw horizontal line for the top of the row
         HPDF_Page_SetRGBStroke(page, 0, 0, 0); // Black color for borders
         HPDF_Page_SetLineWidth(page, 0.5);
         HPDF_Page_MoveTo(page, tableStartX, cursorY);
@@ -227,49 +421,91 @@ void renderTable(HPDF_Doc pdf, HPDF_Page &page, const Table &table,
         HPDF_Page_Stroke(page);
 
         float cellX = tableStartX;
+        colIndex = 0;
 
-        for (size_t i = 0; i < row.size(); ++i)
+        // Draw vertical lines at cell boundaries
+        std::vector<float> cellBoundaries = {cellX};
+
+        for (const auto &cell : row)
         {
-            const TableCell &cell = row[i];
+            size_t span = cell.gridSpan;
+            float cellWidth = 0.0f;
+            for (size_t i = 0; i < span && (colIndex + i) < numCols; ++i)
+            {
+                cellWidth += colWidths[colIndex + i];
+            }
 
-            // Draw vertical line for the cell
-            HPDF_Page_MoveTo(page, cellX, cursorY);
-            HPDF_Page_LineTo(page, cellX, cursorY - rowHeight);
+            cellX += cellWidth;
+            cellBoundaries.push_back(cellX);
+            colIndex += span;
+        }
+
+        // Draw vertical lines
+        for (float x : cellBoundaries)
+        {
+            HPDF_Page_MoveTo(page, x, cursorY);
+            HPDF_Page_LineTo(page, x, cursorY - maxCellHeight);
             HPDF_Page_Stroke(page);
+        }
+
+        // Draw vertical lines for any remaining columns
+        while (colIndex < numCols)
+        {
+            cellX += colWidths[colIndex];
+            HPDF_Page_MoveTo(page, cellX, cursorY);
+            HPDF_Page_LineTo(page, cellX, cursorY - maxCellHeight);
+            HPDF_Page_Stroke(page);
+            colIndex++;
+        }
+
+        // Render cell content
+        cellX = tableStartX;
+        colIndex = 0;
+        size_t cellIndex = 0;
+
+        for (const auto &cell : row)
+        {
+            size_t span = cell.gridSpan;
+            float cellWidth = cellWidths[cellIndex];
+
+            // Calculate the bottom Y coordinate for the cell
+            float cellBottomY = cursorY - maxCellHeight;
 
             // Render cell content
             float textCursorX = cellX + 5; // Padding from left
-            float textCursorY = cursorY - 15; // Adjust as needed
+            float textCursorY = cursorY - 5; // Start from top of cell, adjust padding
+            float bottomY = cellBottomY + 5; // Adjust padding
 
-            // Render text fragments within the cell
             for (const auto &fragment : cell.textFragments)
             {
                 // Set font and color
                 HPDF_Page_SetFontAndSize(page, fragment.font, fragment.fontSize);
                 HPDF_Page_SetRGBFill(page, fragment.r, fragment.g, fragment.b);
 
-                renderTextWithWrapping(pdf, page, fragment.text, textCursorX, textCursorY,
-                                       pageWidth, fragment.fontSize, fragment.font, leftMargin, rightMargin);
+                float availableWidth = cellWidth - 10; // Subtract padding
+
+                // Render text within the cell
+                float tempCursorX = textCursorX;
+                float tempCursorY = textCursorY;
+
+                renderTextInCell(pdf, page, fragment.text, tempCursorX, tempCursorY,
+                                 availableWidth, fragment.fontSize, fragment.font, bottomY);
+
+                textCursorY = tempCursorY; // Update textCursorY after rendering
             }
 
-            cellX += colWidths[i];
+            cellX += cellWidth;
+            colIndex += span;
+            cellIndex++;
         }
 
-        // Draw the last vertical line of the row
-        HPDF_Page_MoveTo(page, tableStartX + tableWidth, cursorY);
-        HPDF_Page_LineTo(page, tableStartX + tableWidth, cursorY - rowHeight);
+        // Draw horizontal line for the bottom of the row
+        HPDF_Page_MoveTo(page, tableStartX, cursorY - maxCellHeight);
+        HPDF_Page_LineTo(page, tableStartX + tableWidth, cursorY - maxCellHeight);
         HPDF_Page_Stroke(page);
 
         // Move cursorY for the next row
-        cursorY -= rowHeight;
-
-        // Handle page break
-        if (cursorY < 50)
-        {
-            page = HPDF_AddPage(pdf);
-            HPDF_Page_SetSize(page, HPDF_PAGE_SIZE_A4, HPDF_PAGE_PORTRAIT);
-            cursorY = HPDF_Page_GetHeight(page) - 50;
-        }
+        cursorY -= maxCellHeight;
     }
 
     // After table, adjust cursorY
@@ -329,7 +565,17 @@ void processElement(XMLElement *element, HPDF_Doc pdf, HPDF_Page &page,
                     // Text element
                     if (child->GetText())
                     {
-                        text = child->GetText();
+                        const char* spacePreserve = child->Attribute("xml:space");
+                        std::string textContent = child->GetText();
+
+                        if (spacePreserve && strcmp(spacePreserve, "preserve") == 0)
+                        {
+                            text = textContent;
+                        }
+                        else
+                        {
+                            text = textContent;
+                        }
                     }
                 }
                 else if (strcmp(child->Name(), "w:tab") == 0)
@@ -377,18 +623,18 @@ void processElement(XMLElement *element, HPDF_Doc pdf, HPDF_Page &page,
                 HPDF_Page_SetFontAndSize(page, font, fontSize);
 
                 // Convert color to RGB
-                unsigned int r = 0, g = 0, b = 0;
+                float r = 0, g = 0, b = 0;
                 if (color.length() == 6)
                 {
                     std::stringstream ss;
                     ss << std::hex << color;
                     unsigned int rgb;
                     ss >> rgb;
-                    r = (rgb >> 16) & 0xFF;
-                    g = (rgb >> 8) & 0xFF;
-                    b = rgb & 0xFF;
+                    r = ((rgb >> 16) & 0xFF) / 255.0f;
+                    g = ((rgb >> 8) & 0xFF) / 255.0f;
+                    b = (rgb & 0xFF) / 255.0f;
                 }
-                HPDF_Page_SetRGBFill(page, r / 255.0f, g / 255.0f, b / 255.0f);
+                HPDF_Page_SetRGBFill(page, r, g, b);
 
                 if (!text.empty())
                 {
@@ -421,7 +667,6 @@ void processElement(XMLElement *element, HPDF_Doc pdf, HPDF_Page &page,
     else
     {
         // Handle other elements if necessary
-        
     }
 }
 
@@ -450,7 +695,7 @@ void generatePDF(const std::string &docxDir, const std::string &outputPdfPath)
     }
     const char *boldFontName = HPDF_LoadTTFontFromFile(pdf, (std::string(fontPath) + "DejaVuSans-Bold.ttf").c_str(), HPDF_TRUE);
     const char *italicFontName = HPDF_LoadTTFontFromFile(pdf, (std::string(fontPath) + "DejaVuSans-Oblique.ttf").c_str(), HPDF_TRUE);
-    const char *boldItalicFontName = HPDF_LoadTTFontFromFile(pdf, (std::string(fontPath) + "DejaVuSansCondensed-BoldOblique.ttf").c_str(), HPDF_TRUE);
+    const char *boldItalicFontName = HPDF_LoadTTFontFromFile(pdf, (std::string(fontPath) + "DejaVuSans-BoldOblique.ttf").c_str(), HPDF_TRUE);
 
     // Get HPDF_Font objects
     HPDF_Font defaultFont = HPDF_GetFont(pdf, fontName, "UTF-8");
