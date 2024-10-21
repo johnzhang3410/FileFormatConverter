@@ -10,6 +10,21 @@
 
 using namespace tinyxml2;
 
+struct TextFragment {
+    std::string text;
+    HPDF_Font font;
+    int fontSize;
+    float r, g, b; // Color components
+};
+
+struct TableCell {
+    std::vector<TextFragment> textFragments;
+};
+
+struct Table {
+    std::vector<std::vector<TableCell>> rows; // Each row contains multiple cells
+};
+
 void renderTextWithWrapping(HPDF_Doc pdf, HPDF_Page &page, const std::string &text, float &cursorX, float &cursorY, float pageWidth, float fontSize, HPDF_Font font, float leftMargin, float rightMargin)
 {
     size_t pos = 0;
@@ -54,6 +69,182 @@ void renderTextWithWrapping(HPDF_Doc pdf, HPDF_Page &page, const std::string &te
 
         pos = nextPos;
     }
+}
+
+// Parse a table element and populate the Table structure
+Table parseTable(XMLElement *tblElement, HPDF_Font defaultFont, HPDF_Font boldFont, HPDF_Font italicFont, HPDF_Font boldItalicFont) {
+    Table table;
+
+    for (XMLElement *tr = tblElement->FirstChildElement("w:tr"); tr; tr = tr->NextSiblingElement("w:tr")) {
+        std::vector<TableCell> row;
+
+        for (XMLElement *tc = tr->FirstChildElement("w:tc"); tc; tc = tc->NextSiblingElement("w:tc")) {
+            TableCell cell;
+
+            // Iterate over paragraphs within the cell
+            for (XMLElement *para = tc->FirstChildElement("w:p"); para; para = para->NextSiblingElement("w:p")) {
+                for (XMLElement *run = para->FirstChildElement("w:r"); run; run = run->NextSiblingElement("w:r")) {
+                    XMLElement *rPr = run->FirstChildElement("w:rPr");
+                    bool isBold = false;
+                    bool isItalic = false;
+                    std::string color = "000000";
+                    int fontSize = 12;
+                    HPDF_Font font = defaultFont;
+
+                    if (rPr) {
+                        if (rPr->FirstChildElement("w:b")) {
+                            isBold = true;
+                        }
+                        if (rPr->FirstChildElement("w:i")) {
+                            isItalic = true;
+                        }
+                        XMLElement *colorElement = rPr->FirstChildElement("w:color");
+                        if (colorElement && colorElement->Attribute("w:val")) {
+                            color = colorElement->Attribute("w:val");
+                        }
+                        XMLElement *szElement = rPr->FirstChildElement("w:sz");
+                        if (szElement && szElement->Attribute("w:val")) {
+                            fontSize = std::stoi(szElement->Attribute("w:val")) / 2;
+                        }
+                    }
+
+                    if (isBold && isItalic) {
+                        font = boldItalicFont;
+                    }
+                    else if (isBold) {
+                        font = boldFont;
+                    }
+                    else if (isItalic) {
+                        font = italicFont;
+                    }
+
+                    // Convert color to RGB
+                    float r = 0, g = 0, b = 0;
+                    if (color.length() == 6) {
+                        std::stringstream ss;
+                        ss << std::hex << color;
+                        unsigned int rgb;
+                        ss >> rgb;
+                        r = ((rgb >> 16) & 0xFF) / 255.0f;
+                        g = ((rgb >> 8) & 0xFF) / 255.0f;
+                        b = (rgb & 0xFF) / 255.0f;
+                    }
+
+                    // Iterate over child elements within the run
+                    for (XMLElement *child = run->FirstChildElement(); child; child = child->NextSiblingElement()) {
+                        if (strcmp(child->Name(), "w:t") == 0) {
+                            // Text element
+                            if (child->GetText()) {
+                                const char* spacePreserve = child->Attribute("xml:space");
+                                std::string textContent = child->GetText();
+
+                                std::string text;
+                                if (spacePreserve && strcmp(spacePreserve, "preserve") == 0) {
+                                    text = textContent;
+                                }
+                                else {
+                                    text = textContent;
+                                }
+
+                                // Create a TextFragment and add to the cell's textFragments
+                                TextFragment fragment;
+                                fragment.text = text;
+                                fragment.font = font;
+                                fragment.fontSize = fontSize;
+                                fragment.r = r;
+                                fragment.g = g;
+                                fragment.b = b;
+                                cell.textFragments.push_back(fragment);
+                            }
+                        }
+                        else if (strcmp(child->Name(), "w:drawing") == 0) {
+                            // Handle images within table cells if needed
+                            continue;
+                        }
+                        else if (strcmp(child->Name(), "w:br") == 0) {
+                            // Line break within table cell
+                            continue;
+                        }
+                    }
+                }
+            }
+
+            row.push_back(cell);
+        }
+        //pushback row after all cells in the row have been processed 
+        table.rows.push_back(row);
+    }
+
+    return table;
+}
+
+// Render a table using libharu
+void renderTable(HPDF_Doc pdf, HPDF_Page &page, const Table &table,
+                float &cursorX, float &cursorY, float pageWidth,
+                float leftMargin, float rightMargin) {
+    if (table.rows.empty()) return;
+
+    //table properties
+    float tableStartX = leftMargin;
+    float tableStartY = cursorY;
+    float tableWidth = pageWidth - leftMargin - rightMargin;
+    size_t numCols = table.rows[0].size();
+
+    // Define column widths (evenly distributed)
+    std::vector<float> colWidths(numCols, tableWidth / numCols);
+
+    // Define row height (fixed for simplicity)
+    float rowHeight = 20.0f; 
+
+    // Draw table borders and content
+    for (const auto &row : table.rows) {
+        // Draw horizontal line for the row
+        HPDF_Page_SetRGBStroke(page, 0, 0, 0); // Black color for borders
+        HPDF_Page_SetLineWidth(page, 0.5);
+        HPDF_Page_MoveTo(page, tableStartX, cursorY);
+        HPDF_Page_LineTo(page, tableStartX + tableWidth, cursorY);
+        HPDF_Page_Stroke(page);
+
+        float cellX = tableStartX;
+
+        for (size_t i = 0; i < row.size(); ++i) {
+            const TableCell &cell = row[i];
+
+            // Draw vertical line for the cell
+            HPDF_Page_MoveTo(page, cellX, cursorY);
+            HPDF_Page_LineTo(page, cellX, cursorY - rowHeight);
+            HPDF_Page_Stroke(page);
+
+            // Render cell content
+            float textCursorX = cellX + 5; // Padding from left
+            float textCursorY = cursorY - 15; // Adjust as needed
+
+            // Render text fragments within the cell
+            for (const auto &fragment : cell.textFragments) {
+                renderTextWithWrapping(pdf, page, fragment.text, textCursorX, textCursorY, pageWidth, fragment.fontSize, fragment.font, leftMargin, rightMargin);
+            }
+
+            cellX += colWidths[i];
+        }
+
+        // Draw the last vertical line of the row
+        HPDF_Page_MoveTo(page, tableStartX + tableWidth, cursorY);
+        HPDF_Page_LineTo(page, tableStartX + tableWidth, cursorY - rowHeight);
+        HPDF_Page_Stroke(page);
+
+        // Move cursorY for the next row
+        cursorY -= rowHeight;
+
+        // Handle page break
+        if (cursorY < 50) {
+            page = HPDF_AddPage(pdf);
+            HPDF_Page_SetSize(page, HPDF_PAGE_SIZE_A4, HPDF_PAGE_PORTRAIT);
+            cursorY = HPDF_Page_GetHeight(page) - 50;
+        }
+    }
+
+    // After table, adjust cursorY
+    cursorY -= 10.0f; // Space after table
 }
 
 //generates pdf from the parsed docx content
@@ -256,5 +447,4 @@ void generatePDF(const std::string &docxDir, const std::string &outputPdfPath)
     }
 
     HPDF_Free(pdf);
-
 }
